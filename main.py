@@ -36,6 +36,9 @@ closes = []               # every close of SYMBOL, warm-up included
 range_hi = None           # highest close of the opening range
 peak_close = None         # highest close since the current entry
 entry_close = None        # close on the bar that decided the current entry
+exit_peak = None          # peak close of the last exited position: a
+                          # re-entry must clear it, so a stop-out is not
+                          # immediately bought back into the same chop
 probed = False
 
 
@@ -46,7 +49,7 @@ def _mean_last(n):
 
 
 def on_batch(state, batch):
-    global range_hi, peak_close, entry_close, probed
+    global range_hi, peak_close, entry_close, exit_peak, probed
     close = state.close(SYMBOL)
     if close is None:
         return None
@@ -64,6 +67,7 @@ def on_batch(state, batch):
             peak_close = close
         peak_close = max(peak_close, close)
         if close * TRAIL_DEN < peak_close * TRAIL_NUM or close * HARD_DEN < entry_close * HARD_NUM:
+            exit_peak = peak_close
             return [{"side": "sell", "symbol": SYMBOL, "qty": held.qty,
                      "max_slippage_bps": MAX_SLIPPAGE_BPS}]
         return None
@@ -71,7 +75,8 @@ def on_batch(state, batch):
     # Flat. A fill may have landed since the last decision; reset markers.
     peak_close = None
     entry_close = None
-    if len(closes) > RANGE_BARS and range_hi is not None and close > range_hi:
+    trigger = range_hi if exit_peak is None else max(range_hi, exit_peak)
+    if len(closes) > RANGE_BARS and trigger is not None and close > trigger:
         spend = min(state.cash * DEPLOY // 100, state.weight_room(SYMBOL))
         if spend >= 1_000_000:
             entry_close = close
